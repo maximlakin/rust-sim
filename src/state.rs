@@ -9,6 +9,7 @@ use cgmath::prelude::*;
 // use rand::Rng;
 
 pub struct State {
+    pub num_vertices: u32,
     pub surface: wgpu::Surface,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -16,22 +17,19 @@ pub struct State {
     pub size: winit::dpi::PhysicalSize<u32>,
     pub render_pipeline: wgpu::RenderPipeline,
     pub render_pipeline_ground: wgpu::RenderPipeline,
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    pub box_vertex_buffer:  wgpu::Buffer,
+    pub ground_vertex_buffer: wgpu::Buffer,
+    pub ground_index_buffer: wgpu::Buffer,
     pub num_indices: u32,
     #[allow(dead_code)]
-    pub diffuse_texture: texture::Texture,
-    pub diffuse_bind_group_red: wgpu::BindGroup,
-    pub diffuse_bind_group_green: wgpu::BindGroup,
-    pub diffuse_bind_group_blue: wgpu::BindGroup,
     pub camera: camera::Camera,
     pub camera_controller: camera::CameraController,
     pub camera_uniform: camera::CameraUniform,
     pub camera_buffer: wgpu::Buffer,
     pub camera_bind_group: wgpu::BindGroup,
-    pub instances: Vec<mesh::Instance>,
+    pub ground_instances: Vec<mesh::Instance>,
     #[allow(dead_code)]
-    pub instance_buffer: wgpu::Buffer,
+    pub ground_instance_buffer: wgpu::Buffer,
     pub depth_texture: texture::Texture,
     pub window: Window,
 }
@@ -84,82 +82,6 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let diffuse_bytes = include_bytes!("assets/happy-tree.png");
-        let diff_red = include_bytes!("assets/red.png");
-        let diff_green = include_bytes!("assets/green.png");
-        let diff_blue = include_bytes!("assets/blue.png");
-
-        let diffuse_texture = texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
-        let diff_red_texture = texture::Texture::from_bytes(&device, &queue, diff_red, "red.png").unwrap();
-        let diff_green_texture = texture::Texture::from_bytes(&device, &queue, diff_green, "green.png").unwrap();
-        let diff_blue_texture = texture::Texture::from_bytes(&device, &queue, diff_blue, "blue.png").unwrap();        
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let diffuse_bind_group_red = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diff_red_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diff_red_texture.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
-        let diffuse_bind_group_green = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diff_green_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diff_green_texture.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
-        let diffuse_bind_group_blue = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diff_blue_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diff_blue_texture.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
-
         let camera = camera::Camera {
             eye: (-10.0, -15.0, 10.0).into(),
             target: (0.0, 0.0, 0.0).into(),
@@ -180,7 +102,7 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let instances = (0..data::NUM_INSTANCES_PER_ROW).flat_map(|y| {
+        let ground_instances = (0..data::NUM_INSTANCES_PER_ROW).flat_map(|y| {
                 (0..data::NUM_INSTANCES_PER_ROW).map(move |x| {
                     let position = cgmath::Vector3 {x: x as f32, y: y as f32, z: 0.0} - data::INSTANCE_DISPLACEMENT;
                     let rotation = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0));
@@ -188,10 +110,10 @@ impl State {
                 })
             }).collect::<Vec<_>>();
 
-        let instance_data = instances.iter().map(mesh::Instance::to_raw).collect::<Vec<_>>();
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let ground_instance_data = ground_instances.iter().map(mesh::Instance::to_raw).collect::<Vec<_>>();
+        let ground_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
+            contents: bytemuck::cast_slice(&ground_instance_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -235,9 +157,10 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
+                bind_group_layouts: &[&camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
+            
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -245,7 +168,7 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[mesh::Vertex::desc(), mesh::InstanceRaw::desc()],
+                buffers: &[mesh::Vertex2::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -260,7 +183,7 @@ impl State {
                 })],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineStrip,
+                topology: wgpu::PrimitiveTopology::LineList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
@@ -327,12 +250,22 @@ impl State {
             multiview: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let num_vertices = data::BOX_VERTICES.len() as u32;
+
+        let box_vertex_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(data::BOX_VERTICES),
+                usage: wgpu::BufferUsages::VERTEX,
+            }
+        );
+
+        let ground_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(data::VERTICES),
+            contents: bytemuck::cast_slice(data::GROUND_VERTICES),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let ground_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(data::INDICES),
             usage: wgpu::BufferUsages::INDEX,
@@ -340,6 +273,7 @@ impl State {
         let num_indices = data::INDICES.len() as u32;
 
         Self {
+            num_vertices,
             surface,
             device,
             queue,
@@ -347,20 +281,17 @@ impl State {
             size,
             render_pipeline,
             render_pipeline_ground,
-            vertex_buffer,
-            index_buffer,
+            box_vertex_buffer,
+            ground_vertex_buffer,
+            ground_index_buffer,
             num_indices,
-            diffuse_texture,
-            diffuse_bind_group_red,
-            diffuse_bind_group_green,
-            diffuse_bind_group_blue,
             camera,
             camera_controller,
             camera_buffer,
             camera_bind_group,
             camera_uniform,
-            instances,
-            instance_buffer,
+            ground_instances,
+            ground_instance_buffer,
             depth_texture,
             window,
         }
@@ -438,13 +369,19 @@ impl State {
             // render_pass.set_bind_group(0, &self.diffuse_bind_group_green, &[]);
             // render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as u32);
 
+            
+
             render_pass.set_pipeline(&self.render_pipeline_ground);
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group_green, &[]);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as u32);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(1, self.ground_instance_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, self.ground_vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.ground_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.ground_instances.len() as u32);
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.box_vertex_buffer.slice(..));
+            render_pass.draw(0..self.num_vertices, 0..1);
         }
         
         self.queue.submit(std::iter::once(encoder.finish()));
